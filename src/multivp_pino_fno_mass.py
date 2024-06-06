@@ -282,17 +282,7 @@ def main(cfg: DictConfig):
                                     "T__L": T__L,
                                 }
                             )
-                            #n, T, B, n__L, T__L, B__L
-                            pde_out_mass = mass_nodes[0].evaluate(
-                                {
-                                    "n": n,
-                                    "T": T,
-                                    "B": B,
-                                    "n__L": n__L,
-                                    "T__L": T__L,
-                                    "B__L": B__L,
-                                }
-                            )
+
 
                             pde_out_arr_mom = pde_out_mom["mom_term"]
                             pde_out_arr_mom = F.pad(
@@ -300,11 +290,9 @@ def main(cfg: DictConfig):
                             )
                             self.loss_pde_mom = F.l1_loss(pde_out_arr_mom, torch.zeros_like(pde_out_arr_mom))
                             
-                            pde_out_arr_mass = pde_out_mass["mass_term"]
-                            pde_out_arr_mass = F.pad(
-                                pde_out_arr_mass[:, :, 2:-2], [2, 2, 2, 2], "constant", 0
-                            )
+                            pde_out_arr_mass = torch.std(n*v/B, dim=1).mean().sqrt()
                             self.loss_pde_mass = F.l1_loss(pde_out_arr_mass, torch.zeros_like(pde_out_arr_mass))
+                            
                             self.loss_pde = attenuation_factor_mom * cfg.phy_wt_mom * self.loss_pde_mom \
                                     + attenuation_factor_mass * cfg.phy_wt_mass * self.loss_pde_mass
                     
