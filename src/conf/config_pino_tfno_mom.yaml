@@ -24,11 +24,11 @@ start_lr: 0.005
 gamma: 0.99948708
 max_epochs: 601
 
-phy_wt_mom: 0.00000000001
+phy_wt_mom: 0.0000000001
 phy_wt_mass: 0
 
-phy_att_mom_max: 0.000000005
-phy_att_mass_max: 0.005
+phy_att_mom_max: 0.00000005
+phy_att_mass_max: 0.00000000000005
 phy_skip_idx: 300
 
 epoch_threshold: 2
@@ -36,7 +36,7 @@ epoch_threshold_upper: 501
 
 optimizer_params:
   betas: [0.9, 0.999]
-  lr: 0.01
+  lr: 0.001
   weight_decay: 0.1
   gamma: 0.95
 

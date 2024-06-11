@@ -28,14 +28,14 @@ import torch.nn.functional as F
 
 from modulus.models.fno import FNO
 from modulus.launch.logging import LaunchLogger
-from modulus.launch.utils.checkpoint import save_checkpoint
+from modulus.launch.utils.checkpoint import save_checkpoint, load_checkpoint
 from modulus.sym.eq.pdes.diffusion import Diffusion
 
 from momentum_conservation import MomentumConservation
 from mass_conservation import MassConservation
 
 #from utils import HDF5MapStyleDataset
-from ops import dx, ddx
+from ops import dx, ddx, cfd, csd
 
 class TensorRobustScaler:
     def __init__(self):
@@ -175,6 +175,8 @@ def main(cfg: DictConfig):
         padding=cfg.model.fno.padding,
     ).to(device)
 
+    load_checkpoint(f'../../results/outputs_pino_fno_mass/checkpoints', models=[model])
+    
     optimizer = torch.optim.AdamW(
         model.parameters(),
         betas=cfg.optimizer_params.betas,
@@ -189,7 +191,7 @@ def main(cfg: DictConfig):
     
     for epoch in range(cfg.max_epochs):
         # wrap epoch in launch logger for console logs
-        if epoch > 0 and epoch < cfg.epoch_threshold_upper and epoch % 25 == 0:
+        if epoch < cfg.epoch_threshold_upper and epoch % 25 == 0:
             attenuation_factor_mom = attenuation_factor_mom * 1.18 if (cfg.phy_att_mom_max > cfg.phy_wt_mom * attenuation_factor_mom) else attenuation_factor_mom
             attenuation_factor_mass = attenuation_factor_mass * 1.18 if (cfg.phy_att_mass_max > cfg.phy_wt_mass * attenuation_factor_mass) else attenuation_factor_mass
             print(f'New attenuation factor momentum: {attenuation_factor_mom}')
@@ -197,7 +199,6 @@ def main(cfg: DictConfig):
             for param_group in optimizer.param_groups:
                 param_group['lr'] = cfg.optimizer_params.lr * 0.1
             scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=cfg.optimizer_params.gamma)
-        
         
         with LaunchLogger(
             "train",
@@ -221,7 +222,7 @@ def main(cfg: DictConfig):
                         # Compute forward pass
                         out = model(invar)
                         
-                        if epoch > cfg.epoch_threshold:
+                        if epoch >= cfg.epoch_threshold:
                             invar_denorm = denormalize(invar, norm_info[0])
                             out_denorm = denormalize(out, norm_info[1])
                             
@@ -261,11 +262,11 @@ def main(cfg: DictConfig):
 
                             # Compute gradients using finite difference
                             # v__L, n__L, T__L, v__L, v__L__L
-                            B__L = dx(invar_denorm[:, :, idx:], dx=dfL, channel=2, order=3, padding="zeros")
-                            n__L = dx(out_denorm[:, :, idx:], dx=dfL, channel=0, order=3, padding="zeros")
-                            v__L = dx(out_denorm[:, :, idx:], dx=dfL, channel=1, order=3, padding="zeros")
-                            T__L = dx(out_denorm[:, :, idx:], dx=dfL, channel=2, order=3, padding="zeros")
-                            v__L__L = ddx(out_denorm[:, :, idx:], dx=dfL, channel=1, order=3, padding="zeros")
+                            B__L = cfd(L,  B)
+                            n__L = cfd(L, n)
+                            v__L = cfd(L, v)
+                            T__L = cfd(L, T)
+                            v__L__L = csd(L, v)
                             
                             # a_a0, v__L, T, n__L, n, T__L, n, v, v__L, v__L__L, cos_alpha, R
                             pde_out_mom = mom_nodes[0].evaluate(
@@ -286,32 +287,33 @@ def main(cfg: DictConfig):
                             pde_out_mass = mass_nodes[0].evaluate(
                                 {
                                     "n": n,
-                                    "T": T,
+                                    "v": v,
                                     "B": B,
                                     "n__L": n__L,
-                                    "T__L": T__L,
+                                    "v__L": v__L,
                                     "B__L": B__L,
                                 }
                             )
 
                             pde_out_arr_mom = pde_out_mom["mom_term"]
                             pde_out_arr_mom = F.pad(
-                                pde_out_arr_mom[:, :, 2:-2], [2, 2, 2, 2], "constant", 0
+                                pde_out_arr_mom[:, 2:-2], [2, 2, 2, 2], "constant", 0
                             )
                             self.loss_pde_mom = F.l1_loss(pde_out_arr_mom, torch.zeros_like(pde_out_arr_mom))
                             
-                            pde_out_arr_mass = pde_out_mass["mass_term"]
-                            pde_out_arr_mass = F.pad(
-                                pde_out_arr_mass[:, :, 2:-2], [2, 2, 2, 2], "constant", 0
-                            )
-                            self.loss_pde_mass = F.l1_loss(pde_out_arr_mass, torch.zeros_like(pde_out_arr_mass))
+                            #pde_out_arr_mass = pde_out_mass["mass_term"]
+                            #pde_out_arr_mass = F.pad(
+                            #    pde_out_arr_mass[:, :, 2:-2], [2, 2, 2, 2], "constant", 0
+                            #)
+                            #self.loss_pde_mass = F.l1_loss(pde_out_arr_mass, torch.zeros_like(pde_out_arr_mass))
+                            self.loss_pde_mass = torch.std((n*v/B), dim=1).mean()
                             self.loss_pde = attenuation_factor_mom * cfg.phy_wt_mom * self.loss_pde_mom \
                                     + attenuation_factor_mass * cfg.phy_wt_mass * self.loss_pde_mass
                     
                         # Compute data loss
                         self.loss_data = F.mse_loss(outvar, out)
                         # Compute total loss          
-                        loss = (self.loss_data + self.loss_pde) if epoch > cfg.epoch_threshold else self.loss_data
+                        loss = (self.loss_data + self.loss_pde) if epoch >= cfg.epoch_threshold else self.loss_data
                         
                         # Backward pass and optimizer and learning rate update
                         loss.backward()
@@ -322,9 +324,9 @@ def main(cfg: DictConfig):
                 log.log_minibatch(
                     {
                         "loss_data": closure_obj.loss_data.detach(), 
-                        "loss_pde": closure_obj.loss_pde.detach() if epoch > cfg.epoch_threshold else torch.nan,
-                        "loss_pde_mom": closure_obj.loss_pde_mom.detach() if epoch > cfg.epoch_threshold else torch.nan,
-                        "loss_pde_mass": closure_obj.loss_pde_mass.detach() if epoch > cfg.epoch_threshold else torch.nan,
+                        "loss_pde": closure_obj.loss_pde.detach() if epoch >= cfg.epoch_threshold else torch.nan,
+                        "loss_pde_mom": closure_obj.loss_pde_mom.detach() if epoch >= cfg.epoch_threshold else torch.nan,
+                        "loss_pde_mass": closure_obj.loss_pde_mass.detach() if epoch >= cfg.epoch_threshold else torch.nan,
                     }
                 )
 

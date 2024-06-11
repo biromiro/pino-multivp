@@ -58,6 +58,6 @@ class MassConservation(PDE):
         # set equations
         self.equations = {}
         self.equations["mass_term"] = (
-            diff((n*T)/B, L, 1)
+            diff((n*v)/B, L, 1)
         )
         

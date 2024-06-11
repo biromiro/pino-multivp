@@ -35,7 +35,7 @@ from momentum_conservation import MomentumConservation
 from mass_conservation import MassConservation
 
 #from utils import HDF5MapStyleDataset
-from ops import dx, ddx
+from ops import dx, ddx, cfd, csd
 
 class TensorRobustScaler:
     def __init__(self):
@@ -265,11 +265,11 @@ def main(cfg: DictConfig):
 
                             # Compute gradients using finite difference
                             # v__L, n__L, T__L, v__L, v__L__L
-                            B__L = dx(invar_denorm[:, :, idx:], dx=dfL, channel=2, order=3, padding="zeros")
-                            n__L = dx(out_denorm[:, :, idx:], dx=dfL, channel=0, order=3, padding="zeros")
-                            v__L = dx(out_denorm[:, :, idx:], dx=dfL, channel=1, order=3, padding="zeros")
-                            T__L = dx(out_denorm[:, :, idx:], dx=dfL, channel=2, order=3, padding="zeros")
-                            v__L__L = ddx(out_denorm[:, :, idx:], dx=dfL, channel=1, order=3, padding="zeros")
+                            B__L = cfd(L,  B)
+                            n__L = cfd(L, n)
+                            v__L = cfd(L, v)
+                            T__L = cfd(L, T)
+                            v__L__L = csd(L, v)
                             
                             # a_a0, v__L, T, n__L, n, T__L, n, v, v__L, v__L__L, cos_alpha, R
                             pde_out_mom = mom_nodes[0].evaluate(
@@ -290,25 +290,26 @@ def main(cfg: DictConfig):
                             pde_out_mass = mass_nodes[0].evaluate(
                                 {
                                     "n": n,
-                                    "T": T,
+                                    "v": v,
                                     "B": B,
                                     "n__L": n__L,
-                                    "T__L": T__L,
+                                    "v__L": v__L,
                                     "B__L": B__L,
                                 }
                             )
 
                             pde_out_arr_mom = pde_out_mom["mom_term"]
                             pde_out_arr_mom = F.pad(
-                                pde_out_arr_mom[:, :, 2:-2], [2, 2, 2, 2], "constant", 0
+                                pde_out_arr_mom[:, 2:-2], [2, 2, 2, 2], "constant", 0
                             )
                             self.loss_pde_mom = F.l1_loss(pde_out_arr_mom, torch.zeros_like(pde_out_arr_mom))
                             
-                            pde_out_arr_mass = pde_out_mass["mass_term"]
-                            pde_out_arr_mass = F.pad(
-                                pde_out_arr_mass[:, :, 2:-2], [2, 2, 2, 2], "constant", 0
-                            )
-                            self.loss_pde_mass = F.l1_loss(pde_out_arr_mass, torch.zeros_like(pde_out_arr_mass))
+                            #pde_out_arr_mass = pde_out_mass["mass_term"]
+                            #pde_out_arr_mass = F.pad(
+                            #    pde_out_arr_mass[:, :, 2:-2], [2, 2, 2, 2], "constant", 0
+                            #)
+                            #self.loss_pde_mass = F.l1_loss(pde_out_arr_mass, torch.zeros_like(pde_out_arr_mass))
+                            self.loss_pde_mass = torch.std((n*v/B), dim=1).mean()
                             self.loss_pde = attenuation_factor_mom * cfg.phy_wt_mom * self.loss_pde_mom \
                                     + attenuation_factor_mass * cfg.phy_wt_mass * self.loss_pde_mass
                     

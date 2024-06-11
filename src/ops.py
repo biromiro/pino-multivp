@@ -90,6 +90,54 @@ def ddx(inpt, dx, channel, order=1, padding="zeros"):
 
     return output
 
+def lagrange_derivative(x, x0, x1, x2, y0, y1, y2):
+    p0 = y0 * (2*x-x1-x2) / ((x0-x1)*(x0-x2))
+    p1 = y1 * (2*x-x0-x2) / ((x1-x0)*(x1-x2))
+    p2 = y2 * (2*x-x0-x1) / ((x2-x0)*(x2-x1))
+    return p0 + p1 + p2
+
+def cfd(x, y):
+    """
+    Adjusted function to compute the central first order derivative for uneven space sequences,
+    with NaN handling without for loops.
+    """
+    d1 = torch.zeros_like(x)
+
+    y0, y1, y2 = y[:, 0], y[:, 1], y[:, 2]
+    x0, x1, x2 = x[:, 0], x[:, 1], x[:, 2]
+    d1[:, 0] = lagrange_derivative(x0, x0, x1, x2, y0, y1, y2)
+
+    y0, y1, y2 = y[:, :-2], y[:, 1:-1], y[:, 2:]
+    x0, x1, x2 = x[:, :-2], x[:, 1:-1], x[:, 2:]
+    d1[:, 1:-1] = lagrange_derivative(x1, x0, x1, x2, y0, y1, y2)
+
+    y0, y1, y2 = y[:, -3], y[:, -2], y[:, -1]
+    x0, x1, x2 = x[:, -3], x[:, -2], x[:, -1]
+    d1[:, -1] = lagrange_derivative(x2, x0, x1, x2, y0, y1, y2)
+
+    return d1
+
+def csd(x, y):
+    """
+    Computes the central second order derivative for uneven space sequences
+    without using for loops, including handling for NaN values.
+    """
+    d2 = torch.zeros_like(x)
+    
+    i = torch.arange(1, x.size(1) - 1)
+    y0, y1, y2 = y[:, i-1], y[:, i], y[:, i+1]
+    x0, x1, x2 = x[:, i-1], x[:, i], x[:, i+1]
+    central_d2 = 2.0 * ((x1 - x0) * y2 - (x2 - x0) * y1 + (x2 - x1) * y0) / ((x1 - x0) * (x2 - x1) * (x2 - x0))
+    d2[:, i] = central_d2
+    
+    d2[:, 0] = 2.0 * ((x[:, 1]-x[:, 0])*y[:, 2] - (x[:, 2]-x[:, 0])*y[:, 1] + (x[:, 2]-x[:, 1])*y[:, 0]) / \
+              ((x[:, 1]-x[:, 0])*(x[:, 2]-x[:, 1])*(x[:, 2]-x[:, 0]))
+    
+    d2[:, -1] = 2.0 * ((x[:, -2]-x[:, -3])*y[:, -1] - (x[:, -1]-x[:, -3])*y[:, -2] + (x[:, -1]-x[:, -2])*y[:, -3]) / \
+               ((x[:, -2]-x[:, -3])*(x[:, -1]-x[:, -2])*(x[:, -1]-x[:, -3]))
+
+    return d2
+
 # Example usage:
 # inpt = torch.randn(1, 3, 10)  # [batch, channels, length]
 # dx_values = torch.linspace(0.1, 1.0, 10)  # example of variable spacing
