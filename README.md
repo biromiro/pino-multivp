@@ -10,7 +10,7 @@ The PiNO approach explores the integration of physics-informed techniques with n
 
 - **src/**: Contains the source code for implementing the PiNO approach.
 - **results/**: Contains visualizations and summaries of experimental results obtained during the study.
-- 
+
 ## Data
 
 The model uses data derived from magnetogram observations and solar wind parameters processed through the MULTI-VP model. Note that due to data privacy and licensing issues, the dataset used in the study is not publicly available in this repository. For access to the data or further inquiries, contact the authors directly.
